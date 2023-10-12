@@ -411,6 +411,67 @@ class LoaderTests(TestCase):
 
     @override_settings(
         MIGRATION_MODULES={
+            "app1": "migrations.test_migrations_squashed_complex_gary.app1",
+            "app2": "migrations.test_migrations_squashed_complex_gary.app2",
+        }
+    )
+    @modify_settings(
+        INSTALLED_APPS={
+            "append": [
+                "migrations.test_migrations_squashed_complex_gary.app1",
+                "migrations.test_migrations_squashed_complex_gary.app2",
+            ]
+        }
+    )
+    def test_loading_squashed_complex_gary(self):
+        loader = MigrationLoader(connection)
+        loader.build_graph()
+
+        plan = set(loader.graph.forwards_plan(("app1", "0101_squashed")))
+        expected_plan = {
+            ("app2", "0001"),
+            ("app2", "0002"),
+            ("app2", "0003"),
+            ("app2", "0004"),
+            ("app1", "0101_squashed"),
+        }
+        self.assertEqual(plan, expected_plan)
+
+    @override_settings(
+        MIGRATION_MODULES={
+            "app1": "migrations.test_migrations_squashed_complex_gary.app1",
+            "app2": "migrations.test_migrations_squashed_complex_gary.app2",
+        }
+    )
+    @modify_settings(
+        INSTALLED_APPS={
+            "append": [
+                "migrations.test_migrations_squashed_complex_gary.app1",
+                "migrations.test_migrations_squashed_complex_gary.app2",
+            ]
+        }
+    )
+    def test_loading_squashed_complex_gary_partially_applied(self):
+        loader = MigrationLoader(connection)
+        recorder = MigrationRecorder(connection)
+        self.record_applied(recorder, "app2", "0001")
+        self.record_applied(recorder, "app1", "0001")
+        loader.build_graph()
+
+        plan = set(loader.graph.forwards_plan(("app1", "0003")))
+        plan -= loader.applied_migrations.keys()
+        expected_plan = {
+            ("app2", "0002"),
+            ("app2", "0003"),
+            ("app2", "0004"),
+            ("app1", "0002"),
+            ("app1", "0003"),
+        }
+
+        self.assertEqual(plan, expected_plan)
+
+    @override_settings(
+        MIGRATION_MODULES={
             "migrations": "migrations.test_migrations_squashed_erroneous"
         }
     )
@@ -456,16 +517,16 @@ class LoaderTests(TestCase):
 
         # Starting at 5 to 7 we are passed the squashed migrations
         self.record_applied(recorder, "migrations", "5_auto")
-        loader.build_graph()
-        self.assertEqual(num_nodes(), 2)
+        with self.assertRaisesMessage(NodeNotFoundError, msg):
+            loader.build_graph()
 
         self.record_applied(recorder, "migrations", "6_auto")
-        loader.build_graph()
-        self.assertEqual(num_nodes(), 1)
+        with self.assertRaisesMessage(NodeNotFoundError, msg):
+            loader.build_graph()
 
         self.record_applied(recorder, "migrations", "7_auto")
-        loader.build_graph()
-        self.assertEqual(num_nodes(), 0)
+        with self.assertRaisesMessage(NodeNotFoundError, msg):
+            loader.build_graph()
 
     @override_settings(
         MIGRATION_MODULES={"migrations": "migrations.test_migrations"},

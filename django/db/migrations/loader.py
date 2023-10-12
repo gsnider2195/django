@@ -239,38 +239,48 @@ class MigrationLoader:
         self.replacements = {}
         for key, migration in self.disk_migrations.items():
             self.graph.add_node(key, migration)
-            # Replacing migrations.
             if migration.replaces:
                 self.replacements[key] = migration
+
+        for key, migration in self.disk_migrations.copy().items():
+            # Replacing migrations.
+            if self.replace_migrations and migration.replaces:
+                applied_statuses = [
+                    (target in self.applied_migrations) for target in migration.replaces
+                ]
+                # keep the replacing migration if none of its
+                # replacement targets have been applied
+                if not any(applied_statuses):
+                    for target in migration.replaces:
+                        print(f"attempting to remove {target} to be replaced by {key}")
+                        for migration2 in self.disk_migrations.values():
+                            while target in migration2.dependencies:
+                                migration2.dependencies[
+                                    migration2.dependencies.index(target)
+                                ] = key
+                        if target in self.disk_migrations:
+                            self.graph.node_map.pop(target)
+                            self.graph.nodes.pop(target)
+                            self.disk_migrations.pop(target)
+                        else:
+                            print(f"unable to find {target}")
+                else:
+                    for migration2 in self.disk_migrations.values():
+                        while key in migration2.dependencies:
+                            idx = migration2.dependencies.index(key)
+                            migration2.dependencies.pop(idx)
+                            for target in reversed(migration.replaces):
+                                migration2.dependencies.insert(idx, target)
+                    self.graph.node_map.pop(key)
+                    self.graph.nodes.pop(key)
+                    self.disk_migrations.pop(key)
+
         for key, migration in self.disk_migrations.items():
             # Internal (same app) dependencies.
             self.add_internal_dependencies(key, migration)
         # Add external dependencies now that the internal ones have been resolved.
         for key, migration in self.disk_migrations.items():
             self.add_external_dependencies(key, migration)
-        # Carry out replacements where possible and if enabled.
-        if self.replace_migrations:
-            for key, migration in self.replacements.items():
-                # Get applied status of each of this migration's replacement
-                # targets.
-                applied_statuses = [
-                    (target in self.applied_migrations) for target in migration.replaces
-                ]
-                # The replacing migration is only marked as applied if all of
-                # its replacement targets are.
-                if all(applied_statuses):
-                    self.applied_migrations[key] = migration
-                else:
-                    self.applied_migrations.pop(key, None)
-                # A replacing migration can be used if either all or none of
-                # its replacement targets have been applied.
-                if all(applied_statuses) or (not any(applied_statuses)):
-                    self.graph.remove_replaced_nodes(key, migration.replaces)
-                else:
-                    # This replacing migration cannot be used because it is
-                    # partially applied. Remove it from the graph and remap
-                    # dependencies to it (#25945).
-                    self.graph.remove_replacement_node(key, migration.replaces)
         # Ensure the graph is consistent.
         try:
             self.graph.validate_consistency()
